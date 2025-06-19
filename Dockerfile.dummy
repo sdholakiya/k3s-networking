@@ -1,0 +1,32 @@
+FROM ubuntu:20.04
+
+# Install netcat for UDP communication
+RUN apt-get update && apt-get install -y netcat && rm -rf /var/lib/apt/lists/*
+
+# Create UDP listener and sender script
+RUN echo '#!/bin/bash\n\
+# Get cFS container IP from environment variable\n\
+CFS_IP=${CFS_CONTAINER_IP:-"cfs-container"}\n\
+echo "Starting dummy container UDP listener on port 9002..."\n\
+echo "Dummy will communicate with cFS container at: $CFS_IP"\n\
+\n\
+# Send initial message to cFS container\n\
+sleep 5\n\
+echo "dummy-hello-$(date +%s)" | nc -u $CFS_IP 1234 &\n\
+\n\
+# Start periodic message sender\n\
+while true; do\n\
+    sleep 10\n\
+    echo "dummy-ping-$(date +%s)" | nc -u $CFS_IP 1234\n\
+done &\n\
+\n\
+# UDP listener on port 9002\n\
+nc -u -l -p 9002 | while read line; do\n\
+    echo "Dummy received: $line"\n\
+    echo "dummy-ack-$(date +%s)" | nc -u $CFS_IP 1234\n\
+done' > /opt/start-dummy.sh && \
+    chmod +x /opt/start-dummy.sh
+
+EXPOSE 9002/udp
+
+CMD ["/opt/start-dummy.sh"]

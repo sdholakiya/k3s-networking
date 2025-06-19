@@ -1,0 +1,54 @@
+FROM ubuntu:20.04
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    make \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /opt/cfs
+
+# Clone cFS repository and build
+RUN git clone --recurse-submodules https://github.com/nasa/cFS.git . && \
+    cp cfe/cmake/Makefile.sample Makefile && \
+    cp -r cfe/cmake/sample_defs sample_defs && \
+    make SIMULATION=native prep && \
+    make
+
+# Create UDP listener script
+RUN echo '#!/bin/bash\n\
+# Get dummy container IP from environment variable\n\
+DUMMY_IP=${DUMMY_CONTAINER_IP:-"dummy-container"}\n\
+echo "cFS will communicate with dummy container at: $DUMMY_IP"\n\
+\n\
+# Start cFS in background\n\
+cd /opt/cfs/build/exe/cpu1 && ./core-cpu1 &\n\
+CFS_PID=$!\n\
+\n\
+# UDP listener and sender on port 1234\n\
+nc -u -l -p 1234 | while read line; do\n\
+    echo "cFS received: $line"\n\
+    echo "cFS-response-$(date +%s)" | nc -u $DUMMY_IP 9002\n\
+done &\n\
+\n\
+# Send periodic heartbeat to dummy container\n\
+while true; do\n\
+    sleep 15\n\
+    echo "cFS-heartbeat-$(date +%s)" | nc -u $DUMMY_IP 9002\n\
+done &\n\
+\n\
+# Keep container running\n\
+wait $CFS_PID' > /opt/start-cfs.sh && \
+    chmod +x /opt/start-cfs.sh
+
+# Install netcat for UDP communication
+RUN apt-get update && apt-get install -y netcat && rm -rf /var/lib/apt/lists/*
+
+EXPOSE 1234/udp
+
+CMD ["/opt/start-cfs.sh"]
